@@ -19,12 +19,10 @@ class BookRecommenderEngine:
         self.books = None
         self.ratings = None
 
-        # Content-Based Attributes
         self.cb_books = None
         self.cosine_sim = None
         self.cb_indices = None
 
-        # Collaborative Filtering Attributes
         self.pivot_matrix = None
         self.knn_model = None
 
@@ -34,7 +32,6 @@ class BookRecommenderEngine:
         min_user_ratings=50,
         min_book_ratings=20,
     ):
-        # 1. Load and clean dataset
         self.books = pd.read_csv(
             self.books_path,
             encoding='latin-1',
@@ -59,7 +56,6 @@ class BookRecommenderEngine:
         self.books.drop(columns=image_cols, errors='ignore', inplace=True)
         self.books.fillna('', inplace=True)
 
-        # 2. Train Content-Based Model
         self.cb_books = (
             self.books.iloc[:cb_subset_size].copy().reset_index(drop=True)
         )
@@ -78,7 +74,6 @@ class BookRecommenderEngine:
             self.cb_books.index, index=self.cb_books['book_title']
         ).drop_duplicates()
 
-        # 3. Train Collaborative Filtering (KNN) Model
         df = self.ratings.merge(self.books, on='isbn')
 
         active_users = df['user_id'].value_counts()[
@@ -141,14 +136,23 @@ class BookRecommenderEngine:
         for i in range(1, len(distances.flatten())):
             rec_title = self.pivot_matrix.index[indices.flatten()[i]]
             sim = round(1 - distances.flatten()[i], 4)
-            recommendations.append(
-                {'book_title': rec_title, 'similarity_score': sim}
-            )
+
+            author, publisher = 'N/A', 'N/A'
+            matched = self.books[self.books['book_title'] == rec_title]
+            if not matched.empty:
+                author = matched.iloc[0]['book_author']
+                publisher = matched.iloc[0]['publisher']
+
+            recommendations.append({
+                'book_title': rec_title,
+                'book_author': author,
+                'publisher': publisher,
+                'similarity_score': sim,
+            })
 
         return pd.DataFrame(recommendations)
 
     def get_user_history(self, user_id: int):
-        """Fetch rating history for a given user ID."""
         user_ratings = self.ratings[self.ratings['user_id'] == user_id]
         user_history = user_ratings.merge(self.books, on='isbn')[
             ['book_title', 'book_author', 'book_rating']
@@ -156,18 +160,16 @@ class BookRecommenderEngine:
         return user_history.sort_values(by='book_rating', ascending=False)
 
     def recommend_for_user(self, user_id: int, top_n: int = 5):
-        """Generate personalized recommendations for a specific User ID."""
         history = self.get_user_history(user_id)
         if history.empty:
             return None, 'No history found for this user.'
 
-        # Find the highest-rated book by the user that exists in our CF pivot matrix
         top_books = history[history['book_title'].isin(self.pivot_matrix.index)]
 
         if top_books.empty:
             return (
                 None,
-                'User rated books, but none are in the filtered Matrix.',
+                'User rated books, but none are in the filtered matrix.',
             )
 
         favorite_book = top_books.iloc[0]['book_title']
@@ -179,12 +181,53 @@ class BookRecommenderEngine:
 
 
 # ==========================================
-# 2. Streamlit Web Interface
+# 2. Modern Streamlit UI Configuration
 # ==========================================
 st.set_page_config(
-    page_title='📚 Book Recommendation System',
-    page_icon='📚',
-    layout='wide',
+    page_title='📚 Book Recommender Pro', page_icon='📖', layout='wide'
+)
+
+# Inject Custom CSS for Card UI Styling
+st.markdown(
+    """
+    <style>
+    .main { background-color: #f8fafc; }
+    
+    .rec-card {
+        background: #ffffff;
+        padding: 18px 22px;
+        border-radius: 12px;
+        border-left: 5px solid #3b82f6;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+        margin-bottom: 14px;
+        transition: transform 0.2s ease;
+    }
+    .rec-card:hover {
+        transform: translateY(-2px);
+    }
+    .rec-title {
+        font-size: 1.1rem;
+        font-weight: 700;
+        color: #1e293b;
+        margin-bottom: 6px;
+    }
+    .rec-meta {
+        font-size: 0.88rem;
+        color: #64748b;
+        margin-bottom: 10px;
+    }
+    .score-badge {
+        background-color: #eff6ff;
+        color: #2563eb;
+        padding: 4px 10px;
+        border-radius: 6px;
+        font-size: 0.82rem;
+        font-weight: 600;
+        display: inline-block;
+    }
+    </style>
+""",
+    unsafe_allow_html=True,
 )
 
 
@@ -199,94 +242,132 @@ def get_trained_engine():
     return engine
 
 
-st.title('📚 Intelligent Book Recommendation System')
-st.markdown(
-    'A dual-engine recommendation platform supporting **Book Title Search** & **Personalized User ID Recommendations**.'
-)
+# Header
+st.title('📚 Intelligent Book Recommender Pro')
+st.caption('A dual-engine platform utilizing **Collaborative Filtering (KNN)** and **Content-Based Metadata Matching (CBF)**')
 
-with st.spinner('🚀 Training models and loading dataset...'):
+with st.spinner('🚀 Training recommendation models and loading data...'):
     engine = get_trained_engine()
 
+# Summary Metrics Dashboard
+col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+with col_m1:
+    st.metric(label='📖 Total Books', value=f'{len(engine.books):,}')
+with col_m2:
+    st.metric(label='⭐ Total Ratings', value=f'{len(engine.ratings):,}')
+with col_m3:
+    st.metric(
+        label='👥 Active Users (CF)', value=f'{len(engine.pivot_matrix.columns):,}'
+    )
+with col_m4:
+    st.metric(
+        label='🎯 Filtered Book Catalog', value=f'{len(engine.pivot_matrix.index):,}'
+    )
+
+st.divider()
+
 # Sidebar Controls
-st.sidebar.header('⚙️ Recommendation Settings')
-
-# Select Mode
-recommendation_mode = st.sidebar.radio(
-    'Select Recommendation Mode:',
-    ('👤 Personalized by User ID', '📖 Search by Book Title'),
-)
-
+st.sidebar.header('⚙️ Control Panel')
 top_n = st.sidebar.slider(
-    'Number of Recommendations (Top N):', min_value=1, max_value=10, value=5
+    'Recommendations Count (Top N):', min_value=1, max_value=10, value=5
 )
 
 
+# Helper function to render recommendation cards
+def render_rec_cards(df_recs):
+    if df_recs is None or df_recs.empty:
+        st.warning('No matching recommendations found.')
+        return
+
+    for _, row in df_recs.iterrows():
+        title = row.get('book_title', 'Unknown Title')
+        author = row.get('book_author', 'N/A')
+        publisher = row.get('publisher', 'N/A')
+        score = row.get('similarity_score', 0.0)
+
+        st.markdown(
+            f"""
+            <div class="rec-card">
+                <div class="rec-title">📖 {title}</div>
+                <div class="rec-meta">👤 Author: <b>{author}</b> &nbsp;|&nbsp; 🏢 Publisher: <b>{publisher}</b></div>
+                <div class="score-badge">Similarity Score: {score}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+# Navigation Tabs
+tab1, tab2 = st.tabs(
+    ['👤 Personalized Recommendations (User Portal)', '🔍 Search by Book Title (Book Portal)']
+)
+
 # ==========================================
-# MODE 1: Personalized Recommendations by User ID
+# TAB 1: User Personalization
 # ==========================================
-if recommendation_mode == '👤 Personalized by User ID':
-    st.subheader('👤 User ID Portal')
+with tab1:
+    st.markdown('### 👤 Personalized Recommendations based on User History')
 
     available_users = sorted(list(engine.pivot_matrix.columns))
-    selected_user_id = st.selectbox('Select a User ID:', available_users)
+    selected_user_id = st.selectbox(
+        'Select a User ID:', available_users, key='user_select'
+    )
 
-    if st.button('✨ Fetch User Profile & Recommendations', type='primary'):
-        st.divider()
+    if st.button('✨ Fetch User Recommendations', type='primary', key='btn_user'):
+        col_hist, col_rec = st.columns([1, 1.2])
 
-        # Display User Rating History
-        st.write(f'### 📜 Rating History for User ID: `{selected_user_id}`')
-        user_history = engine.get_user_history(selected_user_id)
+        with col_hist:
+            st.markdown(
+                f'#### 📜 Top Rated Books by User `{selected_user_id}`'
+            )
+            user_history = engine.get_user_history(selected_user_id)
+            if not user_history.empty:
+                st.dataframe(
+                    user_history.head(8),
+                    use_container_width=True,
+                    height=380,
+                )
+            else:
+                st.info('No rating history available for this user.')
 
-        if not user_history.empty:
-            st.dataframe(user_history.head(10), use_container_width=True)
-
-            # Generate Recommendations based on User's Favorite Book
+        with col_rec:
             fav_book, cf_recs = engine.recommend_for_user(
                 selected_user_id, top_n=top_n
             )
-
             if cf_recs is not None and not cf_recs.empty:
-                st.success(
-                    f"💡 Based on User {selected_user_id}'s top-rated book **'{fav_book}'**, here are the recommended books:"
+                st.markdown(
+                    f"#### 💡 Recommended based on top-rated book **'{fav_book}'**:"
                 )
-                st.dataframe(cf_recs, use_container_width=True)
+                render_rec_cards(cf_recs)
             else:
-                st.warning(
-                    'Could not generate collaborative recommendations for this user.'
-                )
-        else:
-            st.warning('No rating history found for this user.')
-
+                st.warning('Unable to generate collaborative recommendations for this user.')
 
 # ==========================================
-# MODE 2: Recommendations by Book Title
+# TAB 2: Book Title Search
 # ==========================================
-else:
-    st.subheader('🔍 Book Title Search Portal')
+with tab2:
+    st.markdown('### 🔍 Find Similar Books by Title')
 
     available_books = sorted(list(engine.pivot_matrix.index))
-    selected_book = st.selectbox('Type or select a book title:', available_books)
-
-    algorithm = st.sidebar.radio(
-        'Select Algorithm:', ('Both', 'Content-Based', 'Collaborative Filtering')
+    selected_book = st.selectbox(
+        'Type or select a book title:', available_books, key='book_select'
     )
 
-    if st.button('✨ Generate Recommendations', type='primary'):
+    algorithm = st.radio(
+        'Select Recommendation Engine:',
+        ('Collaborative Filtering', 'Content-Based Filtering', 'Dual-Engine Comparison'),
+        horizontal=True,
+    )
+
+    if st.button('✨ Generate Recommendations', type='primary', key='btn_book'):
         st.divider()
-        st.info(f"Generating results for **'{selected_book}'**:")
 
-        if algorithm in ['Both', 'Content-Based']:
-            st.subheader('📖 Content-Based Filtering')
+        if algorithm in ['Content-Based Filtering', 'Dual-Engine Comparison']:
+            st.markdown('#### 📖 Content-Based Recommendations (Metadata Matching)')
             cb_results = engine.recommend_content_based(selected_book, top_n)
-            if cb_results is not None:
-                st.dataframe(cb_results, use_container_width=True)
-            else:
-                st.warning('Book not found in Content-Based subset.')
+            render_rec_cards(cb_results)
 
-        if algorithm in ['Both', 'Collaborative Filtering']:
-            st.subheader('👥 Collaborative Filtering (KNN)')
+        if algorithm in ['Collaborative Filtering', 'Dual-Engine Comparison']:
+            st.markdown('#### 👥 Collaborative Filtering Recommendations (KNN User Behavior)')
             cf_results = engine.recommend_collaborative(selected_book, top_n)
-            if cf_results is not None:
-                st.dataframe(cf_results, use_container_width=True)
-            else:
-                st.warning('Insufficient rating data for Collaborative Filtering.')
+            render_rec_cards(cf_results)
